@@ -17,6 +17,7 @@ Ein spielbares 5+1-Match (2 × 2 Minuten) gegen die KI:
 - Anstoß: Beide Teams bleiben bis zur Ausführung in ihrer Hälfte. Einwurf: Mitspieler laufen sich kurz, zurück und in die Tiefe frei
 - Halbzeit mit bis zu 3 Wechseln, Endbildschirm mit Sperren und Ausfällen fürs nächste Spiel
 - Alle Werte kommen aus den Spieler-Stats (1–20) und wirken direkt im Spiel
+- KI-Spielstile: Das Feld ist für die KI in 3 Drittel × Flügel/Zentrum eingeteilt. Jeder Stil legt fest, wohin gepasst und gedribbelt wird, wie oft hoch/lang gespielt und geflankt wird und wie breit/hoch die Formation steht. Mitgeliefert: **Ausgeglichen**, **Flügelspiel**, **Kick and Rush**. Der Gegner bekommt zufällig einen Stil, der Name steht unter dem Teamnamen
 - Werbebanden und Namen lassen sich über den Ordner `mods/` austauschen (siehe `one-more-season/mods/README.md`)
 
 ## Starten
@@ -64,6 +65,7 @@ Aktueller Schnitt bei 12 Spielen (2 × 2 Minuten): **2,1 Tore, 6 Schüsse, 6 Fou
 ```
 one-more-season/
 ├── data/namen.json            Standardnamen und Vereine
+├── data/spielstile.json       KI-Spielstile (überschreibbar über mods/daten/)
 ├── mods/                      Überschreibbare Banden und Namen
 ├── scenes/match.tscn          Startszene
 ├── scripts/
@@ -74,3 +76,25 @@ one-more-season/
 ```
 
 Alle Formeln, die Stats in Spielverhalten übersetzen, stehen in `scripts/logic/match_rules.gd`. Dort setzt das Balancing an.
+
+## Eigene Spielstile
+
+Einen Eintrag in `data/spielstile.json` kopieren, `id` und `name` ändern und die Werte anpassen. Alternativ die Datei nach `mods/daten/spielstile.json` kopieren. Die wichtigsten Werte:
+
+| Wert | Bedeutung |
+| --- | --- |
+| `zonen` | Gewichte `fluegel` gegen `zentrum` je Drittel: wohin gepasst und gedribbelt wird |
+| `hoch_pass`, `lang_pass` | Anteil hoher bzw. Vorliebe für weite Pässe, je Drittel [Abwehr, Mittelfeld, Angriff] |
+| `pass_rate`, `dribbel_neigung` | Wie schnell abgespielt bzw. wie gern gedribbelt wird |
+| `flanken_rate` | Flanken pro Sekunde auf dem Flügel im Angriffsdrittel |
+| `breite`, `hoehe` | Formation breiter bzw. weiter vorne |
+| `pressing` | Zweikampfhäufigkeit |
+| `langer_ball_aus_abwehr` | Abwehr und Torwart schlagen den Ball sofort lang nach vorne |
+
+Gemessen über 4 Spiele je Stil gegen „Ausgeglichen“:
+
+| Stil | Pässe auf Flügel | Dribbeln auf Flügel | Hoch aus der Abwehr | Flanken/Spiel | Lange Bälle/Spiel |
+| --- | --- | --- | --- | --- | --- |
+| Ausgeglichen | 13 % | 18 % | 39 % | 1,5 | 0 |
+| Flügelspiel | 37 % | 37 % | 34 % | 4,2 | 0 |
+| Kick and Rush | 9 % | 11 % | 100 % | 1,5 | 14 |

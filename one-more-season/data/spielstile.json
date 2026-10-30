@@ -1,0 +1,65 @@
+{
+	"_info": "KI-Spielstile. Zum Anpassen nach mods/daten/spielstile.json kopieren. Drittel jeweils aus Sicht des Teams: abwehr, mittelfeld, angriff. zonen = Gewichte, wohin gepasst und gedribbelt wird (fluegel gegen zentrum). Listen mit 3 Werten gelten für [abwehr, mittelfeld, angriff].",
+	"stile": [
+		{
+			"id": "ausgeglichen",
+			"name": "Ausgeglichen",
+			"beschreibung": "Kein besonderer Schwerpunkt, spielt je nach Lage flach oder lang.",
+			"zonen": {
+				"abwehr": {"fluegel": 1.0, "zentrum": 1.0},
+				"mittelfeld": {"fluegel": 1.0, "zentrum": 1.0},
+				"angriff": {"fluegel": 1.0, "zentrum": 1.0}
+			},
+			"hoch_pass": [0.15, 0.15, 0.1],
+			"lang_pass": [0.0, 0.0, 0.0],
+			"pass_rate": 1.0,
+			"dribbel_neigung": 0.5,
+			"flanken_rate": 0.25,
+			"schuss_distanz": 1.0,
+			"breite": 1.0,
+			"hoehe": 0.0,
+			"pressing": 1.0,
+			"langer_ball_aus_abwehr": false
+		},
+		{
+			"id": "fluegelspiel",
+			"name": "Flügelspiel",
+			"beschreibung": "Zieht das Spiel in die Breite, dribbelt die Außenbahnen hinunter und flankt in den Strafraum.",
+			"zonen": {
+				"abwehr": {"fluegel": 1.6, "zentrum": 1.0},
+				"mittelfeld": {"fluegel": 3.0, "zentrum": 0.6},
+				"angriff": {"fluegel": 2.6, "zentrum": 0.8}
+			},
+			"hoch_pass": [0.1, 0.15, 0.45],
+			"lang_pass": [0.0, 0.2, 0.0],
+			"pass_rate": 1.1,
+			"dribbel_neigung": 0.6,
+			"flanken_rate": 1.4,
+			"schuss_distanz": 0.9,
+			"breite": 1.3,
+			"hoehe": 0.0,
+			"pressing": 1.0,
+			"langer_ball_aus_abwehr": false
+		},
+		{
+			"id": "kick_and_rush",
+			"name": "Kick and Rush",
+			"beschreibung": "Die Abwehr schlägt den Ball sofort hoch und lang nach vorne, die Offensive rennt hinterher und presst hoch.",
+			"zonen": {
+				"abwehr": {"fluegel": 1.0, "zentrum": 1.0},
+				"mittelfeld": {"fluegel": 1.0, "zentrum": 1.2},
+				"angriff": {"fluegel": 0.8, "zentrum": 1.5}
+			},
+			"hoch_pass": [1.0, 0.6, 0.2],
+			"lang_pass": [1.0, 0.6, 0.0],
+			"pass_rate": 2.0,
+			"dribbel_neigung": 0.2,
+			"flanken_rate": 0.4,
+			"schuss_distanz": 1.2,
+			"breite": 1.0,
+			"hoehe": 0.06,
+			"pressing": 1.3,
+			"langer_ball_aus_abwehr": true
+		}
+	]
+}
