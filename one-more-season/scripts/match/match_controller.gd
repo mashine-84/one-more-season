@@ -9,6 +9,11 @@ enum Standard { ANSTOSS, EINWURF, ECKE, ABSTOSS, FREISTOSS, ELFMETER }
 enum Taktik { DEFENSIV, AUSGEGLICHEN, OFFENSIV }
 
 const TAKTIK_NAMEN := ["Defensiv", "Ausgeglichen", "Offensiv"]
+const STANDARD_NAMEN := ["Anstoß", "Einwurf", "Ecke", "Abstoß", "Freistoß", "Elfmeter"]
+## Abstand, den Gegner bei Freistoß, Einwurf, Ecke und Anstoß halten müssen.
+const SCHUTZ_RADIUS := 60.0
+## Wie lange der menschliche Torwart den Ball in der Hand halten darf.
+const TW_HALTEZEIT_MENSCH := 6.0
 const MAX_WECHSEL := 3
 ## Formation 2-2-1. x: 0 = eigenes Tor, 1 = gegnerisches Tor. y: 0 = oben, 1 = unten.
 const FORMATION_221: Array[Vector2] = [
@@ -17,7 +22,7 @@ const FORMATION_221: Array[Vector2] = [
 	Vector2(0.68, 0.5),
 ]
 
-@export var halbzeit_sekunden := 240.0
+@export var halbzeit_sekunden := 120.0
 @export var autoplay := false        ## Auch das eigene Team spielt per KI (Tests, Demo)
 @export var seed_wert := -1
 
@@ -47,6 +52,8 @@ var standard_typ := Standard.ANSTOSS
 var standard_team := 0
 var standard_pos := Vector2.ZERO
 var standard_ausfuehrer: Footballer
+var standard_laeuft := false          # Ball liegt, Ausführender muss passen/flanken/schießen
+var standard_ki_timer := 0.0
 
 var kontrolliert: Footballer
 var schuss_laedt := false
@@ -149,6 +156,15 @@ func besitz_team() -> int:
 	return ball.besitzer.team_idx if ball.besitzer else -1
 
 
+## Darf der Ball gerade nicht angegriffen werden?
+## (Standard vor der Ausführung oder Torwart hält den Ball im Strafraum)
+func ball_geschuetzt() -> bool:
+	if standard_laeuft:
+		return true
+	var b := ball.besitzer
+	return b != null and b.ist_torwart and Pitch.im_strafraum(b.position, -richtung[b.team_idx])
+
+
 func ist_mensch(t: int) -> bool:
 	return t == 0 and not autoplay
 
@@ -237,7 +253,10 @@ func step(delta: float) -> void:
 				if not autoplay:
 					_mensch(delta)
 				_ki(delta)
+				_standard_regeln(delta)
 				_bewege(delta)
+				_schutzzonen()
+				_torwart_in_der_hand()
 				_ball_regeln()
 		Zustand.UNTERBRECHUNG:
 			pause_timer -= delta
@@ -263,6 +282,8 @@ func _bewege(delta: float) -> void:
 			f.step(delta)
 	_kollisionen()
 	ball.step(delta)
+	if standard_laeuft:
+		ball.position = standard_pos   # Ball liegt fest, der Spieler zielt nur
 
 
 ## Spieler können nicht durcheinander hindurchlaufen.
@@ -283,20 +304,34 @@ func _kollisionen() -> void:
 			var d := v.length()
 			if d < min_abstand and d > 0.01:
 				var schub := v / d * (min_abstand - d) * 0.5
-				a.position -= schub
-				b.position += schub
+				if standard_laeuft and a == standard_ausfuehrer:
+					b.position += schub * 2.0
+				elif standard_laeuft and b == standard_ausfuehrer:
+					a.position -= schub * 2.0
+				else:
+					a.position -= schub
+					b.position += schub
 
 
 # ---------------------------------------------------------------- Mensch
 
 func _mensch(delta: float) -> void:
-	if kontrolliert == null or not kontrolliert.ist_aktiv() or kontrolliert.ist_torwart:
+	# Den Torwart steuert man nur, solange er den Ball hat
+	if kontrolliert == null or not kontrolliert.ist_aktiv() \
+			or (kontrolliert.ist_torwart and ball.besitzer != kontrolliert):
 		_wechsle_spieler()
 	if kontrolliert == null:
 		return
 	var dir := Input.get_vector("om_links", "om_rechts", "om_hoch", "om_runter")
-	kontrolliert.wunsch_richtung = dir
-	kontrolliert.wunsch_sprint = Input.is_action_pressed("om_sprint")
+	var am_standard := standard_laeuft and ball.besitzer == kontrolliert
+	if am_standard:
+		# Beim Standard nur zielen, nicht laufen
+		kontrolliert.wunsch_richtung = Vector2.ZERO
+		if dir.length() > 0.2:
+			kontrolliert.blick = dir.normalized()
+	else:
+		kontrolliert.wunsch_richtung = dir
+	kontrolliert.wunsch_sprint = Input.is_action_pressed("om_sprint") and not am_standard
 	kontrolliert.wunsch_tempo = 1.0
 
 	if Input.is_action_just_pressed("om_taktik"):
@@ -304,17 +339,36 @@ func _mensch(delta: float) -> void:
 		_meldung("Taktik: %s" % TAKTIK_NAMEN[taktik[0]])
 
 	if ball.besitzer == kontrolliert:
-		if Input.is_action_just_pressed("om_pass"):
+		var art: int = standard_typ if am_standard else -1
+		var tw := kontrolliert.ist_torwart
+		if tw:
+			kontrolliert.halte_zeit -= delta
+			if kontrolliert.halte_zeit <= 0.0:
+				_meldung("6 Sekunden um – Abschlag")
+				_abschlag(kontrolliert, dir, 0.7)
+				return
+		var nur_schuss := art == Standard.ELFMETER
+		if Input.is_action_just_pressed("om_pass") and not nur_schuss:
 			_mensch_pass(dir, false, false)
-		elif Input.is_action_just_pressed("om_steil"):
+		elif Input.is_action_just_pressed("om_steil") and not nur_schuss:
 			_mensch_pass(dir, true, false)
-		elif Input.is_action_just_pressed("om_lupfer"):
-			_mensch_pass(dir, true, true)
+		elif Input.is_action_just_pressed("om_lupfer") and not nur_schuss:
+			if art == Standard.ECKE:
+				_flanke(kontrolliert, dir)
+			else:
+				_mensch_pass(dir, true, true)
 		elif Input.is_action_pressed("om_schuss"):
 			schuss_laedt = true
 			schuss_kraft = minf(1.0, schuss_kraft + delta / 0.8)
 		elif schuss_laedt:
-			_schiessen(kontrolliert, dir, schuss_kraft)
+			if tw:
+				_abschlag(kontrolliert, dir, schuss_kraft)
+			elif art == Standard.EINWURF:
+				_mensch_pass(dir, false, true)
+			elif art == Standard.ECKE:
+				_flanke(kontrolliert, dir)
+			else:
+				_schiessen(kontrolliert, dir, schuss_kraft)
 			schuss_laedt = false
 			schuss_kraft = 0.0
 	else:
@@ -387,8 +441,12 @@ func _pressing_anfordern(t: int) -> void:
 # ---------------------------------------------------------------- Ballaktionen
 
 func _kick(von: Footballer, v: Vector2, vz := 0.0, schuss := false) -> void:
+	if standard_laeuft:
+		standard_laeuft = false
+		_zaehle("standard_ausgefuehrt")
+	var start := ball.position if ball.besitzer == von else von.position + v.normalized() * 12.0
 	ball.besitzer = null
-	ball.position = von.position + v.normalized() * 12.0
+	ball.position = start
 	ball.vel = v
 	ball.vz = vz
 	ball.z = 1.0 if vz > 0.0 else 0.0
@@ -415,6 +473,36 @@ func _passen(von: Footballer, an: Footballer, steil: bool, lupfer: bool) -> void
 	else:
 		_kick(von, r * clampf(dist * 0.87 + 170.0, 230.0, 720.0))
 	ball.ziel_spieler = an
+
+
+## Hohe Hereingabe in den Strafraum (Ecke, Flanke). Mit Richtung: zum Mitspieler in dieser Richtung.
+func _flanke(von: Footballer, dir := Vector2.ZERO) -> void:
+	var t := von.team_idx
+	var seite := richtung[t]
+	var ziel_pos := Pitch.elfmeterpunkt(seite)
+	var abnehmer: Footballer = null
+	if dir.length() > 0.2:
+		abnehmer = _mitspieler_in_richtung(von, dir)
+	if abnehmer == null:
+		abnehmer = _naechster(t, ziel_pos, true, von)
+	if abnehmer and abnehmer.position.distance_to(Pitch.tor_mitte(seite)) < 220.0:
+		ziel_pos = abnehmer.position
+	ziel_pos += Vector2(rng.randf_range(-15.0, 15.0), rng.randf_range(-20.0, 20.0))
+	var diff := ziel_pos - von.position
+	var dist := diff.length()
+	var streuung := deg_to_rad(MatchRules.pass_streuung(von.daten.wert("passen")))
+	var r := diff.normalized().rotated(rng.randf_range(-streuung, streuung) * 0.5)
+	var vz := 250.0 + dist * 0.18
+	var flugzeit := 2.0 * vz / MatchBall.SCHWERKRAFT
+	_kick(von, r * (dist / flugzeit) * 0.95, vz)
+	ball.ziel_spieler = abnehmer
+
+
+## Weiter Abschlag des Torwarts. Kraft 0–1 bestimmt die Weite.
+func _abschlag(tw: Footballer, dir: Vector2, kraft: float) -> void:
+	if dir.length() < 0.2:
+		dir = Vector2(richtung[tw.team_idx], 0)
+	_kick(tw, dir.normalized() * (380.0 + 300.0 * kraft), 200.0 + 160.0 * kraft)
 
 
 func _schiessen(s: Footballer, dir: Vector2, kraft: float) -> void:
@@ -454,13 +542,13 @@ func _ballannahme(f: Footballer) -> void:
 	ball.z = 0.0
 	ball.vz = 0.0
 	if f.ist_torwart:
-		f.halte_zeit = 0.9
-	elif ist_mensch(f.team_idx):
+		f.halte_zeit = TW_HALTEZEIT_MENSCH if ist_mensch(f.team_idx) else 0.9
+	if ist_mensch(f.team_idx):
 		_setze_kontrolle(f)
 
 
 func _stehendes_tackling(f: Footballer) -> void:
-	if not f.kann_handeln() or f.tackling_cooldown > 0.0:
+	if not f.kann_handeln() or f.tackling_cooldown > 0.0 or ball_geschuetzt():
 		return
 	f.tackling_cooldown = 0.7
 	var gegner := ball.besitzer
@@ -492,7 +580,8 @@ func _graetschen_pruefen() -> void:
 		for f in aktive(t):
 			if f.graetsche_zeit <= 0.0:
 				continue
-			if not f.graetsche_ball_beruehrt and ball.z < 10.0 and f.position.distance_to(ball.position) < 17.0:
+			if not f.graetsche_ball_beruehrt and not ball_geschuetzt() and ball.z < 10.0 \
+					and f.position.distance_to(ball.position) < 17.0:
 				f.graetsche_ball_beruehrt = true
 				if ball.besitzer == null or ball.besitzer.team_idx != f.team_idx:
 					if ball.besitzer:
@@ -687,6 +776,8 @@ func _freier_ball() -> void:
 
 ## Läuft der Ballführer einem Gegner in die Beine, kann der den Ball erobern.
 func _ball_kontakt() -> void:
+	if ball_geschuetzt():
+		return
 	var owner := ball.besitzer
 	for g in aktive(1 - owner.team_idx, false):
 		if not g.kann_handeln() or g.tackling_cooldown > 0.0 or (ist_mensch(g.team_idx) and g == kontrolliert):
@@ -705,11 +796,11 @@ func _ball_kontakt() -> void:
 			return
 
 
-## streckung: 0 = Ball genau auf den Torwart, 1 = am Rand der Hechtreichweite.
 func _zaehle(key: String) -> void:
 	statistik[key] = int(statistik.get(key, 0)) + 1
 
 
+## streckung: 0 = Ball genau auf den Torwart, 1 = am Rand der Hechtreichweite.
 func _parade(tw: Footballer, streckung: float) -> void:
 	var tempo := ball.vel.length()
 	var chance := MatchRules.parade_chance(tw.daten.wert("reflexe"), tw.daten.wert("eins_gegen_eins"),
@@ -785,6 +876,7 @@ func _tor(t: int) -> void:
 
 func _unterbrechung(typ: Standard, t: int, pos: Vector2, dauer := 1.2) -> void:
 	zustand = Zustand.UNTERBRECHUNG
+	standard_laeuft = false
 	pause_timer = dauer
 	standard_typ = typ
 	standard_team = t
@@ -856,7 +948,7 @@ func _aufstellen() -> void:
 	for tt in 2:
 		for f in aktive(tt):
 			f.position = f.position.clamp(Pitch.FELD.position - Vector2(14, 14), Pitch.FELD.end + Vector2(14, 14))
-	if ist_mensch(t) and ausfuehrer and not ausfuehrer.ist_torwart:
+	if ist_mensch(t) and ausfuehrer:
 		_setze_kontrolle(ausfuehrer)
 
 
@@ -866,8 +958,114 @@ func _standard_ausfuehren() -> void:
 		return
 	ball.position = standard_pos
 	_ballannahme(standard_ausfuehrer)
-	if standard_typ == Standard.ELFMETER and not ist_mensch(standard_team):
-		_schiessen(standard_ausfuehrer, Vector2(richtung[standard_team], rng.randf_range(-0.9, 0.9)), rng.randf_range(0.6, 0.95))
+	standard_laeuft = true
+	standard_ki_timer = rng.randf_range(0.5, 1.1)
+	_zaehle("standard_%s" % STANDARD_NAMEN[standard_typ])
+
+
+## Während eines Standards: Ausführender bleibt stehen, die KI entscheidet nach kurzer Zeit.
+func _standard_regeln(delta: float) -> void:
+	if not standard_laeuft:
+		return
+	var a := standard_ausfuehrer
+	if a == null or not a.ist_aktiv() or ball.besitzer != a:
+		standard_laeuft = false
+		return
+	a.wunsch_richtung = Vector2.ZERO
+	a.wunsch_sprint = false
+	if ist_mensch(a.team_idx):
+		return
+	standard_ki_timer -= delta
+	if standard_ki_timer <= 0.0:
+		_ki_standard(a)
+
+
+func _ki_standard(a: Footballer) -> void:
+	var t := a.team_idx
+	var tor := Pitch.tor_mitte(richtung[t])
+	match standard_typ:
+		Standard.ELFMETER:
+			_schiessen(a, Vector2(richtung[t], rng.randf_range(-0.9, 0.9)), rng.randf_range(0.6, 0.95))
+		Standard.ECKE:
+			if rng.randf() < 0.75:
+				_flanke(a)
+			else:
+				_ki_standard_pass(a)
+		Standard.FREISTOSS:
+			var frei := not _schussbahn_zu(a, tor)
+			if a.position.distance_to(tor) < 250.0 and frei and rng.randf() < 0.6:
+				_schiessen(a, Vector2(richtung[t], rng.randf_range(-0.8, 0.8)), rng.randf_range(0.65, 1.0))
+			elif _fortschritt(t, a.position) > 0.72 and rng.randf() < 0.5:
+				_flanke(a)
+			else:
+				_ki_standard_pass(a)
+		_:
+			_ki_standard_pass(a)
+
+
+func _ki_standard_pass(a: Footballer) -> void:
+	var ziel := _bester_passempfaenger(a, true)
+	if ziel == null:
+		ziel = _naechster(a.team_idx, a.position, true, a)
+	if ziel:
+		_passen(a, ziel, false, a.position.distance_to(ziel.position) > 240.0)
+	elif a.ist_torwart:
+		_abschlag(a, Vector2.ZERO, 0.8)
+	else:
+		_kick(a, Vector2(richtung[a.team_idx], 0) * 380.0, 150.0)
+
+
+## Gegner dürfen vor der Ausführung nicht in die Schutzzone.
+func _schutzzonen() -> void:
+	if not standard_laeuft:
+		return
+	var t := standard_team
+	var gegner := 1 - t
+	match standard_typ:
+		Standard.ABSTOSS:
+			# Gegner bleiben außerhalb des Strafraums
+			var seite := -richtung[t]
+			var linie := Pitch.tor_mitte(seite).x - seite * (Pitch.STRAFRAUM_TIEFE + Footballer.RADIUS + 2.0)
+			for g in aktive(gegner):
+				if Pitch.im_strafraum(g.position, seite) or absf(g.position.x - Pitch.tor_mitte(seite).x) < Pitch.STRAFRAUM_TIEFE + Footballer.RADIUS:
+					if absf(g.position.y - Pitch.mitte().y) < Pitch.STRAFRAUM_HALBE + Footballer.RADIUS:
+						g.position.x = linie
+		Standard.ELFMETER:
+			# Alle außer Schütze und Torwart bleiben außerhalb des Strafraums
+			var seite := richtung[t]
+			var tor := Pitch.tor_mitte(seite)
+			var linie := tor.x - seite * (Pitch.STRAFRAUM_TIEFE + Footballer.RADIUS + 2.0)
+			for tt in 2:
+				for f in aktive(tt):
+					if f == standard_ausfuehrer:
+						continue
+					if f.ist_torwart and tt == gegner:
+						f.position.x = tor.x - seite * 10.0   # auf der Linie bleiben
+						continue
+					if Pitch.im_strafraum(f.position, seite) or f.position.distance_to(ball.position) < SCHUTZ_RADIUS:
+						f.position.x = linie
+		_:
+			for g in aktive(gegner):
+				var v := g.position - ball.position
+				if v.length() < SCHUTZ_RADIUS:
+					var n := v.normalized() if v.length() > 0.1 else Vector2(-richtung[t], 0)
+					g.position = ball.position + n * SCHUTZ_RADIUS
+				if standard_typ == Standard.ANSTOSS and _fortschritt(gegner, g.position) > 0.5:
+					g.position.x = Pitch.mitte().x - richtung[gegner] * (Footballer.RADIUS + 1.0)
+
+
+## Torwart mit Ball in der Hand bleibt im eigenen Strafraum.
+func _torwart_in_der_hand() -> void:
+	var tw := ball.besitzer
+	if tw == null or not tw.ist_torwart:
+		return
+	var seite := -richtung[tw.team_idx]
+	var tor := Pitch.tor_mitte(seite)
+	var innen_x := tor.x - seite * (Pitch.STRAFRAUM_TIEFE - 4.0)
+	var x_min := minf(tor.x, innen_x)
+	var x_max := maxf(tor.x, innen_x)
+	tw.position.x = clampf(tw.position.x, x_min + 2.0, x_max - 2.0)
+	tw.position.y = clampf(tw.position.y, tor.y - Pitch.STRAFRAUM_HALBE + 4.0, tor.y + Pitch.STRAFRAUM_HALBE - 4.0)
 
 
 # ---------------------------------------------------------------- Halbzeit & Ende
@@ -933,7 +1131,10 @@ func _ki(delta: float) -> void:
 			if f.ist_torwart:
 				_ki_torwart(f, delta)
 			elif ball.besitzer == f:
-				_ki_ballfuehrer(f, delta)
+				if standard_laeuft:
+					f.wunsch_richtung = Vector2.ZERO
+				else:
+					_ki_ballfuehrer(f, delta)
 			elif besitz == t:
 				_ki_freilaufen(f)
 			elif besitz == -1:
@@ -998,6 +1199,10 @@ func _ki_decken(f: Footballer) -> void:
 func _ki_pressen(f: Footballer, delta: float) -> void:
 	var gegner := ball.besitzer
 	if gegner == null:
+		return
+	if ball_geschuetzt():
+		# Nicht angreifen: auf Abstand gehen und decken
+		_ki_decken(f)
 		return
 	var d := f.position.distance_to(gegner.position)
 	_gehe_zu(f, gegner.position + gegner.vel * 0.2)
@@ -1093,7 +1298,7 @@ func _ki_torwart(f: Footballer, delta: float) -> void:
 	if ball.besitzer == f:
 		f.wunsch_richtung = Vector2.ZERO
 		f.halte_zeit -= delta
-		if f.halte_zeit <= 0.0:
+		if f.halte_zeit <= 0.0 and not standard_laeuft:
 			var ziel := _bester_passempfaenger(f, true)
 			if ziel == null:
 				ziel = _naechster(t, f.position, true, f)
@@ -1115,8 +1320,8 @@ func _ki_torwart(f: Footballer, delta: float) -> void:
 		# Schuss oder rollender Ball Richtung Tor: in die Bahn stellen
 		ziel = Vector2(linie_x, clampf(y_ankunft, tor.y - Pitch.TOR_HALBE - 6.0, tor.y + Pitch.TOR_HALBE + 6.0))
 		f.wunsch_sprint = true
-	elif ball.besitzer and ball.besitzer.team_idx != t and b.distance_to(tor) < 115.0 \
-			and f.position.distance_to(b) < 75.0:
+	elif ball.besitzer and ball.besitzer.team_idx != t and not ball_geschuetzt() \
+			and b.distance_to(tor) < 115.0 and f.position.distance_to(b) < 75.0:
 		# Herauslaufen und dem Ballführer den Ball abnehmen
 		ziel = b
 		f.wunsch_sprint = true

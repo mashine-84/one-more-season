@@ -20,6 +20,8 @@ func _laufen() -> void:
 	_test_logik()
 	print("== Simulation: %d Spiele KI gegen KI ==" % spiele)
 	await _simulation(spiele)
+	print("== Standards und Torwart ==")
+	await _standard_tests()
 	print("== Mensch-Steuerung mit zufälligen Eingaben ==")
 	await _mensch_test()
 	print("== %s (%d Fehler) ==" % ["OK" if fehler == 0 else "FEHLGESCHLAGEN", fehler])
@@ -85,6 +87,8 @@ func _test_logik() -> void:
 
 func _simulation(anzahl: int) -> void:
 	var summe := {"tore": 0, "schuesse": 0, "fouls": 0, "gelb": 0, "rot": 0, "verletzung": 0, "elfmeter": 0}
+	var verstoesse := {"zone": 0, "bewegt": 0, "ballverlust": 0}
+	var standards := 0
 	for i in anzahl:
 		var m := MatchController.new()
 		m.autoplay = true
@@ -95,8 +99,20 @@ func _simulation(anzahl: int) -> void:
 		var schritte := 0
 		var elf := 0
 		var letzter_typ := -1
+		var war_standard := false
+		var start_pos := Vector2.ZERO
 		while m.zustand != MatchController.Zustand.ENDE and schritte < 60 * 60 * 12:
 			m.step(1.0 / 60.0)
+			if m.standard_laeuft and not war_standard:
+				start_pos = m.standard_ausfuehrer.position
+				standards += 1
+			if m.standard_laeuft:
+				_pruefe_standard(m, start_pos, verstoesse)
+			elif war_standard and m.zustand == MatchController.Zustand.LAEUFT and m.ball.besitzer != null \
+					and m.ball.letzter_kontakt == m.standard_ausfuehrer:
+				# Standard endete, ohne dass der Ball gespielt wurde
+				verstoesse["ballverlust"] += 1
+			war_standard = m.standard_laeuft
 			if m.zustand == MatchController.Zustand.UNTERBRECHUNG and m.standard_typ != letzter_typ and m.standard_typ == MatchController.Standard.ELFMETER:
 				elf += 1
 			letzter_typ = m.standard_typ if m.zustand == MatchController.Zustand.UNTERBRECHUNG else -1
@@ -126,10 +142,105 @@ func _simulation(anzahl: int) -> void:
 	print("  Schnitt pro Spiel: Tore %.1f · Schüsse %.1f · Fouls %.1f · Gelb %.1f · Rot %.2f · Verletzungen %.2f · Elfmeter %.2f" % [
 		summe["tore"] / n, summe["schuesse"] / n, summe["fouls"] / n, summe["gelb"] / n,
 		summe["rot"] / n, summe["verletzung"] / n, summe["elfmeter"] / n])
-	# Grober Rahmen für KI gegen KI (2 × 4 Minuten). Feintuning passiert im Playtest.
-	pruefe(summe["tore"] / n >= 2.0 and summe["tore"] / n <= 14.0, "Torschnitt plausibel (2–14)")
+	print("  Standards: %d · Verstöße %s" % [standards, verstoesse])
+	pruefe(standards > anzahl * 5, "Standards werden ausgeführt")
+	pruefe(verstoesse["zone"] == 0, "Gegner bleiben bei Standards außerhalb der Schutzzone")
+	pruefe(verstoesse["bewegt"] == 0, "Ausführender läuft beim Standard nicht los")
+	pruefe(verstoesse["ballverlust"] == 0, "Standard endet immer mit Pass, Flanke oder Schuss")
+	# Grober Rahmen für KI gegen KI (2 × 2 Minuten). Feintuning passiert im Playtest.
+	pruefe(summe["tore"] / n >= 1.0 and summe["tore"] / n <= 8.0, "Torschnitt plausibel (1–8)")
 	pruefe(summe["rot"] / n <= 1.0, "Höchstens 1 Platzverweis pro Spiel im Schnitt")
 	pruefe(summe["schuesse"] > 0, "Es wird geschossen")
+
+
+func _pruefe_standard(m: MatchController, start_pos: Vector2, v: Dictionary) -> void:
+	var a := m.standard_ausfuehrer
+	if a.position.distance_to(start_pos) > 3.0:
+		v["bewegt"] += 1
+	var t := m.standard_team
+	for g in m.aktive(1 - t):
+		match m.standard_typ:
+			MatchController.Standard.ABSTOSS:
+				if Pitch.im_strafraum(g.position, -m.richtung[t]):
+					v["zone"] += 1
+			MatchController.Standard.ELFMETER:
+				if not g.ist_torwart and Pitch.im_strafraum(g.position, m.richtung[t]):
+					v["zone"] += 1
+			_:
+				if g.position.distance_to(m.ball.position) < MatchController.SCHUTZ_RADIUS - 1.0:
+					v["zone"] += 1
+
+
+## Erzwingt einen Standard für das eigene Team und wartet, bis er freigegeben ist.
+func _standard_erzwingen(m: MatchController, typ: MatchController.Standard, pos: Vector2) -> void:
+	m._unterbrechung(typ, 0, pos, 0.2)
+	while m.zustand != MatchController.Zustand.LAEUFT:
+		m.step(1.0 / 60.0)
+
+
+func _taste(m: MatchController, aktion: String, frames: int) -> void:
+	Input.action_press(aktion)
+	for i in frames:
+		await process_frame
+		m.step(1.0 / 60.0)
+	Input.action_release(aktion)
+	await process_frame
+	m.step(1.0 / 60.0)
+
+
+func _standard_tests() -> void:
+	var m := MatchController.new()
+	m.seed_wert = 21
+	root.add_child(m)
+	if m.ball == null:
+		await process_frame
+
+	# Freistoß: Ausführender wird gesteuert, läuft nicht los, Gegner halten Abstand
+	_standard_erzwingen(m, MatchController.Standard.FREISTOSS, Pitch.mitte() + Vector2(-80, 40))
+	var a := m.standard_ausfuehrer
+	pruefe(m.kontrolliert == a and m.ball.besitzer == a and m.standard_laeuft, "Freistoß: eigener Ausführender hat den Ball")
+	var start := a.position
+	await _taste(m, "om_rechts", 40)
+	pruefe(a.position.distance_to(start) < 3.0, "Freistoß: Spieler läuft nicht los, sondern zielt nur")
+	pruefe(m.standard_laeuft and m.ball.besitzer == a, "Freistoß: Gegner nimmt den Ball nicht weg")
+	var nah := false
+	for g in m.aktive(1):
+		if g.position.distance_to(m.ball.position) < MatchController.SCHUTZ_RADIUS - 1.0:
+			nah = true
+	pruefe(not nah, "Freistoß: alle Gegner außerhalb der Kreiszone")
+	await _taste(m, "om_pass", 1)
+	pruefe(not m.standard_laeuft and m.ball.besitzer != a, "Freistoß: Pass spielt den Ball")
+
+	# Abstoß: eigener Torwart wird gesteuert und kann passen
+	_standard_erzwingen(m, MatchController.Standard.ABSTOSS, Pitch.tor_mitte(-m.richtung[0]))
+	var tw := m.torwart(0)
+	pruefe(m.standard_ausfuehrer == tw and m.kontrolliert == tw, "Abstoß: eigener Torwart wird gesteuert")
+	var im_raum := false
+	for g in m.aktive(1):
+		if Pitch.im_strafraum(g.position, -m.richtung[0]):
+			im_raum = true
+	pruefe(not im_raum, "Abstoß: kein Gegner im Strafraum")
+	await _taste(m, "om_pass", 1)
+	pruefe(m.ball.besitzer != tw and m.ball.letzter_kontakt == tw, "Abstoß: Torwart passt")
+
+	# Torwart mit Ball in der Hand: Abschlag per Schuss-Taste
+	m._ballannahme(tw)
+	pruefe(m.kontrolliert == tw, "Gefangener Ball: Torwart wird gesteuert")
+	await _taste(m, "om_schuss", 30)
+	pruefe(m.ball.besitzer != tw and m.ball.letzter_kontakt == tw and m.ball.vel.length() > 300.0, "Torwart: Abschlag mit der Schuss-Taste")
+
+	# Einwurf: Schuss-Taste wirft weit statt zu schießen
+	var schuesse_vor := m.ergebnis.schuesse[0]
+	_standard_erzwingen(m, MatchController.Standard.EINWURF, Vector2(Pitch.mitte().x, Pitch.FELD.position.y))
+	await _taste(m, "om_schuss", 10)
+	pruefe(not m.standard_laeuft and m.ergebnis.schuesse[0] == schuesse_vor, "Einwurf: kein Torschuss möglich")
+
+	# Ecke: Flanke landet im Strafraum-Bereich
+	var seite := m.richtung[0]
+	_standard_erzwingen(m, MatchController.Standard.ECKE, Vector2(Pitch.FELD.end.x if seite > 0 else Pitch.FELD.position.x, Pitch.FELD.position.y))
+	await _taste(m, "om_lupfer", 1)
+	pruefe(not m.standard_laeuft and m.ball.z > 0.0, "Ecke: Flanke ist ein hoher Ball")
+	m.queue_free()
 
 
 ## Spielt mit zufälligen Tasten, um alle Wege der direkten Steuerung zu durchlaufen.
