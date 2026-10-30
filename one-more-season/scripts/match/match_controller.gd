@@ -304,9 +304,14 @@ func _kollisionen() -> void:
 			var d := v.length()
 			if d < min_abstand and d > 0.01:
 				var schub := v / d * (min_abstand - d) * 0.5
-				if standard_laeuft and a == standard_ausfuehrer:
+				# Torwart und Standard-Ausführender bleiben stehen, der andere weicht ganz aus
+				var a_fest := a.ist_torwart or (standard_laeuft and a == standard_ausfuehrer)
+				var b_fest := b.ist_torwart or (standard_laeuft and b == standard_ausfuehrer)
+				if a_fest and b_fest:
+					continue
+				if a_fest:
 					b.position += schub * 2.0
-				elif standard_laeuft and b == standard_ausfuehrer:
+				elif b_fest:
 					a.position -= schub * 2.0
 				else:
 					a.position -= schub
@@ -580,7 +585,8 @@ func _graetschen_pruefen() -> void:
 		for f in aktive(t):
 			if f.graetsche_zeit <= 0.0:
 				continue
-			if not f.graetsche_ball_beruehrt and not ball_geschuetzt() and ball.z < 10.0 \
+			var tw_hat_ball := ball.besitzer != null and ball.besitzer.ist_torwart
+			if not f.graetsche_ball_beruehrt and not ball_geschuetzt() and not tw_hat_ball and ball.z < 10.0 \
 					and f.position.distance_to(ball.position) < 17.0:
 				f.graetsche_ball_beruehrt = true
 				if ball.besitzer == null or ball.besitzer.team_idx != f.team_idx:
@@ -592,6 +598,10 @@ func _graetschen_pruefen() -> void:
 					ball.vel = f.graetsche_richtung.rotated(rng.randf_range(-0.5, 0.5)) * 230.0
 			for g in aktive(1 - t):
 				if f.graetsche_getroffen.has(g) or f.position.distance_to(g.position) > 17.0:
+					continue
+				if g.ist_torwart:
+					# Der Torwart ist gegen Grätschen immun: kein Foul, kein Ballverlust
+					f.graetsche_getroffen.append(g)
 					continue
 				f.graetsche_getroffen.append(g)
 				var hatte_ball := ball.besitzer == g
@@ -960,6 +970,9 @@ func _standard_ausfuehren() -> void:
 	_ballannahme(standard_ausfuehrer)
 	standard_laeuft = true
 	standard_ki_timer = rng.randf_range(0.5, 1.1)
+	if standard_typ == Standard.EINWURF:
+		# Mitspieler brauchen einen Moment, um sich freizulaufen
+		standard_ki_timer = rng.randf_range(1.0, 1.6)
 	_zaehle("standard_%s" % STANDARD_NAMEN[standard_typ])
 
 
@@ -1050,8 +1063,14 @@ func _schutzzonen() -> void:
 				if v.length() < SCHUTZ_RADIUS:
 					var n := v.normalized() if v.length() > 0.1 else Vector2(-richtung[t], 0)
 					g.position = ball.position + n * SCHUTZ_RADIUS
-				if standard_typ == Standard.ANSTOSS and _fortschritt(gegner, g.position) > 0.5:
-					g.position.x = Pitch.mitte().x - richtung[gegner] * (Footballer.RADIUS + 1.0)
+			if standard_typ == Standard.ANSTOSS:
+				# Niemand überquert vor dem Anstoß die Mittellinie
+				for tt in 2:
+					for f in aktive(tt):
+						if f == standard_ausfuehrer:
+							continue
+						if _fortschritt(tt, f.position) > 0.5 - Footballer.RADIUS / Pitch.FELD.size.x:
+							f.position.x = Pitch.mitte().x - richtung[tt] * (Footballer.RADIUS + 1.0)
 
 
 ## Torwart mit Ball in der Hand bleibt im eigenen Strafraum.
@@ -1136,7 +1155,10 @@ func _ki(delta: float) -> void:
 				else:
 					_ki_ballfuehrer(f, delta)
 			elif besitz == t:
-				_ki_freilaufen(f)
+				if standard_laeuft and standard_typ == Standard.EINWURF:
+					_ki_einwurf_anbieten(f)
+				else:
+					_ki_freilaufen(f)
 			elif besitz == -1:
 				var mensch_naeher := mensch and kontrolliert != null \
 					and kontrolliert.position.distance_to(ball.position) < f.position.distance_to(ball.position) * 1.3
@@ -1159,6 +1181,35 @@ func _ki(delta: float) -> void:
 				else:
 					_ki_decken(f)
 		_trennen(t)
+
+
+## Beim Einwurf: die nächsten Mitspieler laufen sich kurz, zurück und in die Tiefe frei.
+func _ki_einwurf_anbieten(f: Footballer) -> void:
+	var t := f.team_idx
+	var mitspieler := aktive(t, false).filter(func(m: Footballer) -> bool: return m != standard_ausfuehrer)
+	mitspieler.sort_custom(func(a: Footballer, b: Footballer) -> bool:
+		return a.position.distance_squared_to(ball.position) < b.position.distance_squared_to(ball.position))
+	var rang := mitspieler.find(f)
+	if rang < 0 or rang > 2:
+		_ki_freilaufen(f)
+		return
+	var nach_innen := Vector2(0, 1 if ball.position.y < Pitch.mitte().y else -1)
+	var nach_vorne := Vector2(richtung[t], 0)
+	var ziel: Vector2
+	match rang:
+		0: ziel = ball.position + nach_innen * 75.0 + nach_vorne * 45.0     # kurz, leicht nach vorne
+		1: ziel = ball.position + nach_innen * 95.0 - nach_vorne * 70.0     # zurück zur Mitte
+		_: ziel = ball.position + nach_innen * 40.0 + nach_vorne * 150.0    # die Linie entlang in die Tiefe
+	# Ständig in Bewegung bleiben, damit der Gegner nicht einfach zustellen kann
+	var zeit := spielzeit
+	ziel += Vector2(sin(zeit * 2.3 + rang * 2.0), cos(zeit * 1.9 + rang)) * 18.0
+	# Dem nächsten Gegenspieler ausweichen
+	var g := _naechster(1 - t, ziel, false)
+	if g and g.position.distance_to(ziel) < 45.0:
+		ziel += (ziel - g.position).normalized() * 35.0
+	ziel = ziel.clamp(Pitch.FELD.position + Vector2(15, 15), Pitch.FELD.end - Vector2(15, 15))
+	_gehe_zu(f, ziel)
+	f.wunsch_sprint = f.position.distance_to(ziel) > 60.0
 
 
 func _ki_freilaufen(f: Footballer) -> void:

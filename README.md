@@ -13,6 +13,8 @@ Ein spielbares 5+1-Match (2 × 2 Minuten) gegen die KI:
 - Fouls, Freistöße, Elfmeter, Gelb, Gelb-Rot, Rot (inkl. Notbremse), Verletzungen mit Pflichtwechsel
 - Standards (Anstoß, Einwurf, Ecke, Abstoß, Freistoß, Elfmeter): Der Ausführende bleibt stehen und muss passen, flanken oder schießen. Gegner dürfen vorher nicht angreifen. Beim Abstoß bleiben sie außerhalb des Strafraums, sonst gilt ein unsichtbarer Kreis von 60 px um den Ball
 - Der eigene Torwart ist steuerbar, sobald er den Ball hat: Pass, Lupfer oder Abschlag, höchstens 6 Sekunden in der Hand
+- Torwart: lässt sich nicht wegschieben und ist gegen Grätschen immun
+- Anstoß: Beide Teams bleiben bis zur Ausführung in ihrer Hälfte. Einwurf: Mitspieler laufen sich kurz, zurück und in die Tiefe frei
 - Halbzeit mit bis zu 3 Wechseln, Endbildschirm mit Sperren und Ausfällen fürs nächste Spiel
 - Alle Werte kommen aus den Spieler-Stats (1–20) und wirken direkt im Spiel
 - Werbebanden und Namen lassen sich über den Ordner `mods/` austauschen (siehe `one-more-season/mods/README.md`)

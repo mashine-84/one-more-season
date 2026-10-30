@@ -87,7 +87,7 @@ func _test_logik() -> void:
 
 func _simulation(anzahl: int) -> void:
 	var summe := {"tore": 0, "schuesse": 0, "fouls": 0, "gelb": 0, "rot": 0, "verletzung": 0, "elfmeter": 0}
-	var verstoesse := {"zone": 0, "bewegt": 0, "ballverlust": 0}
+	var verstoesse := {"zone": 0, "bewegt": 0, "ballverlust": 0, "mittellinie": 0}
 	var standards := 0
 	for i in anzahl:
 		var m := MatchController.new()
@@ -147,6 +147,7 @@ func _simulation(anzahl: int) -> void:
 	pruefe(verstoesse["zone"] == 0, "Gegner bleiben bei Standards außerhalb der Schutzzone")
 	pruefe(verstoesse["bewegt"] == 0, "Ausführender läuft beim Standard nicht los")
 	pruefe(verstoesse["ballverlust"] == 0, "Standard endet immer mit Pass, Flanke oder Schuss")
+	pruefe(verstoesse["mittellinie"] == 0, "Beim Anstoß überquert niemand die Mittellinie")
 	# Grober Rahmen für KI gegen KI (2 × 2 Minuten). Feintuning passiert im Playtest.
 	pruefe(summe["tore"] / n >= 1.0 and summe["tore"] / n <= 8.0, "Torschnitt plausibel (1–8)")
 	pruefe(summe["rot"] / n <= 1.0, "Höchstens 1 Platzverweis pro Spiel im Schnitt")
@@ -158,6 +159,11 @@ func _pruefe_standard(m: MatchController, start_pos: Vector2, v: Dictionary) -> 
 	if a.position.distance_to(start_pos) > 3.0:
 		v["bewegt"] += 1
 	var t := m.standard_team
+	if m.standard_typ == MatchController.Standard.ANSTOSS:
+		for tt in 2:
+			for f in m.aktive(tt):
+				if f != a and m._fortschritt(tt, f.position) > 0.5 + 0.5 / Pitch.FELD.size.x:
+					v["mittellinie"] = int(v.get("mittellinie", 0)) + 1
 	for g in m.aktive(1 - t):
 		match m.standard_typ:
 			MatchController.Standard.ABSTOSS:
@@ -234,6 +240,47 @@ func _standard_tests() -> void:
 	_standard_erzwingen(m, MatchController.Standard.EINWURF, Vector2(Pitch.mitte().x, Pitch.FELD.position.y))
 	await _taste(m, "om_schuss", 10)
 	pruefe(not m.standard_laeuft and m.ergebnis.schuesse[0] == schuesse_vor, "Einwurf: kein Torschuss möglich")
+
+	# Einwurf: Mitspieler laufen sich frei
+	_standard_erzwingen(m, MatchController.Standard.EINWURF, Vector2(Pitch.mitte().x, Pitch.FELD.end.y))
+	var werfer := m.standard_ausfuehrer
+	var vorher := {}
+	for f in m.aktive(0, false):
+		vorher[f] = f.position
+	for i in 60:
+		m.step(1.0 / 60.0)
+	var bewegt := 0.0
+	var anspielbar := false
+	for f in m.aktive(0, false):
+		if f == werfer:
+			continue
+		bewegt += f.position.distance_to(vorher[f])
+		var g := m._naechster(1, f.position, false)
+		var frei := g == null or g.position.distance_to(f.position) > 28.0
+		if frei and f.position.distance_to(m.ball.position) < 150.0:
+			anspielbar = true
+	pruefe(bewegt > 60.0, "Einwurf: Mitspieler bewegen sich")
+	pruefe(anspielbar, "Einwurf: mindestens ein Mitspieler steht frei und nah")
+	await _taste(m, "om_pass", 1)
+
+	# Torwart lässt sich nicht wegschieben
+	var tw2 := m.torwart(1)
+	var feld := m.aktive(0, false)[0]
+	var tw_pos := tw2.position
+	feld.position = tw_pos + Vector2(5, 0)
+	m._kollisionen()
+	pruefe(tw2.position == tw_pos and feld.position.distance_to(tw_pos) >= Footballer.RADIUS * 2.0 - 0.01, "Torwart wird bei Kollisionen nicht geschoben")
+
+	# Torwart ist immun gegen Grätschen
+	m._ballannahme(tw2)
+	tw2.betaeubt = 0.0
+	feld.position = tw2.position - Vector2(30, 0)
+	feld.starte_graetsche(tw2.position - feld.position)
+	for i in 20:
+		feld.step(1.0 / 60.0)
+		m._graetschen_pruefen()
+	pruefe(m.ball.besitzer == tw2 and tw2.betaeubt == 0.0, "Torwart ist gegen Grätschen immun")
+	m.zustand = MatchController.Zustand.LAEUFT
 
 	# Ecke: Flanke landet im Strafraum-Bereich
 	var seite := m.richtung[0]
