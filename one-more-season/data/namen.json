@@ -1,0 +1,31 @@
+{
+	"_info": "Fiktive Namen. Zum Ueberschreiben diese Datei nach mods/daten/namen.json kopieren und dort aendern.",
+	"vornamen": [
+		"Jannik", "Malte", "Hauke", "Ole", "Finn", "Torben", "Jonas", "Lasse",
+		"Niklas", "Bjarne", "Kai", "Lennart", "Mats", "Henrik", "Arne", "Sönke",
+		"Timo", "Fiete", "Jasper", "Moritz", "Emil", "Piet", "Leon", "Mika",
+		"Yannick", "Deniz", "Luca", "Milan", "Noah", "Tarek", "Elias", "Rasmus",
+		"Joris", "Keno", "Lukas", "Ben", "Jakob", "Till", "Nils", "Vincent"
+	],
+	"nachnamen": [
+		"Petersen", "Hansen", "Jensen", "Thomsen", "Carstens", "Friedrichsen",
+		"Ohlsen", "Brodersen", "Lorenzen", "Martens", "Clausen", "Paulsen",
+		"Rickert", "Wiebke", "Harms", "Detlefsen", "Krohn", "Brandt", "Möller",
+		"Stamer", "Behrens", "Rathje", "Dibbern", "Kühl", "Sievers", "Lüders",
+		"Matzen", "Asmussen", "Bendixen", "Gosch", "Hinz", "Iwersen", "Jacobsen",
+		"Kruse", "Ladewig", "Nissen", "Ottens", "Pries", "Reimers", "Schütt",
+		"Tamm", "Voss", "Wulf", "Arp", "Boysen", "Dittmer", "Ewers", "Feddersen",
+		"Groth", "Holst", "Ivens", "Kock", "Lembke", "Mohr", "Neumann", "Okon",
+		"Steffen", "Tiedemann", "Uhlig", "Westphal"
+	],
+	"vereine": [
+		{"name": "SV Deichkrone", "kurz": "SVD", "farbe": "#c0392b"},
+		{"name": "FC Möwenkamp", "kurz": "FCM", "farbe": "#2471a3"},
+		{"name": "TuS Kutterhafen", "kurz": "TUS", "farbe": "#1e8449"},
+		{"name": "VfB Leuchtturm", "kurz": "VFB", "farbe": "#d4ac0d"},
+		{"name": "Eintracht Salzwiese", "kurz": "EIS", "farbe": "#7d3c98"},
+		{"name": "SC Brackwasser", "kurz": "SCB", "farbe": "#ca6f1e"},
+		{"name": "Blau-Weiß Hallig", "kurz": "BWH", "farbe": "#1b4f72"},
+		{"name": "Rot-Gold Fehmarnsund", "kurz": "RGF", "farbe": "#943126"}
+	]
+}
