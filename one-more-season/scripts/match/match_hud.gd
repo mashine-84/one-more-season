@@ -39,6 +39,8 @@ func _draw() -> void:
 	_text(font, "K/A Pass · L/X Steil · I/Y Lupfer · J/B Schuss (halten) / Grätsche · L/X Tackling · Shift/RT Sprint · Q/LB Taktik",
 		Vector2(470, 640), 11, Color(1, 1, 1, 0.5))
 
+	_standard_hinweis(font, m)
+
 	if m.gross_meldung_zeit > 0.0 and m.zustand != MatchController.Zustand.HALBZEIT:
 		var a := clampf(m.gross_meldung_zeit * 2.0, 0.0, 1.0)
 		draw_rect(Rect2(326, 300, 500, 70), Color(0, 0, 0, 0.55 * a))
@@ -116,3 +118,35 @@ func _text(font: Font, s: String, pos: Vector2, groesse: int, farbe: Color) -> v
 func _zentriert(font: Font, s: String, pos: Vector2, groesse: int, farbe: Color) -> void:
 	var b := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, groesse).x
 	draw_string(font, Vector2(pos.x - b / 2.0, pos.y), s, HORIZONTAL_ALIGNMENT_LEFT, -1, groesse, farbe)
+
+
+const STANDARD_HILFE := {
+	MatchController.Standard.ANSTOSS: "Anstoß: K/A Pass · L/X Steil · I/Y Lupfer",
+	MatchController.Standard.EINWURF: "Einwurf: K/A kurz · I/Y oder J/B weit",
+	MatchController.Standard.ECKE: "Ecke: K/A kurz · I/Y oder J/B Flanke",
+	MatchController.Standard.ABSTOSS: "Abstoß: K/A Pass · I/Y Lupfer · J/B Abschlag (halten)",
+	MatchController.Standard.FREISTOSS: "Freistoß: K/A Pass · L/X Steil · I/Y Lupfer · J/B Schuss (halten)",
+	MatchController.Standard.ELFMETER: "Elfmeter: Richtung wählen · J/B halten und loslassen",
+}
+
+
+func _standard_hinweis(font: Font, m: MatchController) -> void:
+	if m.zustand != MatchController.Zustand.LAEUFT or m.ball.besitzer == null:
+		return
+	var b := m.ball.besitzer
+	if not m.ist_mensch(b.team_idx):
+		return
+	var text := ""
+	if m.standard_laeuft and b == m.standard_ausfuehrer:
+		text = STANDARD_HILFE[m.standard_typ]
+		# Zielrichtung anzeigen
+		for i in 5:
+			var a := b.position + b.blick * (22.0 + i * 14.0)
+			draw_line(a, a + b.blick * 7.0, Color(1, 1, 1, 0.8 - i * 0.12), 2.0)
+	elif b.ist_torwart:
+		text = "Torwart: K/A Pass · I/Y Lupfer · J/B Abschlag (halten) · noch %d s" % ceili(maxf(0.0, b.halte_zeit))
+	if text == "":
+		return
+	var breite := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 24.0
+	draw_rect(Rect2(576 - breite / 2.0, 110, breite, 26), Color(0, 0, 0, 0.6))
+	_zentriert(font, text, Vector2(576, 128), 14, Color("#f7dc6f"))
