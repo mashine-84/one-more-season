@@ -42,6 +42,22 @@ static func im_strafraum(pos: Vector2, seite: int) -> bool:
 	return absf(pos.x - tor.x) <= STRAFRAUM_TIEFE and signf(pos.x - tor.x) != float(seite)
 
 
+## Zonen für die KI: Außenbahnen sind die äußeren 30 % der Feldbreite.
+const FLUEGEL_ANTEIL := 0.3
+
+
+static func ist_fluegel(pos: Vector2) -> bool:
+	var y := (pos.y - FELD.position.y) / FELD.size.y
+	return y < FLUEGEL_ANTEIL or y > 1.0 - FLUEGEL_ANTEIL
+
+
+## Mitte der nächstgelegenen Außenbahn (y in Weltkoordinaten).
+static func fluegel_y(pos: Vector2) -> float:
+	var oben := pos.y < FELD.get_center().y
+	var anteil := FLUEGEL_ANTEIL * 0.45
+	return FELD.position.y + FELD.size.y * (anteil if oben else 1.0 - anteil)
+
+
 static func elfmeterpunkt(seite: int) -> Vector2:
 	return tor_mitte(seite) - Vector2(ELFMETER_ABSTAND * seite, 0)
 

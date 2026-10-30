@@ -25,6 +25,8 @@ const FORMATION_221: Array[Vector2] = [
 @export var halbzeit_sekunden := 120.0
 @export var autoplay := false        ## Auch das eigene Team spielt per KI (Tests, Demo)
 @export var seed_wert := -1
+## Optional: Spielstil-IDs je Team erzwingen (Tests, später Liga). Leer = Stil des Teams.
+@export var stil_vorgabe: Array[String] = ["", ""]
 
 var teams: Array[TeamData] = []
 var spieler: Array = [[], []]         # je Team: Array von Footballer
@@ -32,6 +34,7 @@ var bank: Array = [[], []]            # je Team: Array von PlayerData
 var wechsel: Array[int] = [0, 0]
 var taktik: Array[int] = [Taktik.AUSGEGLICHEN, Taktik.AUSGEGLICHEN]
 var richtung: Array[int] = [1, -1]    # Angriffsrichtung in x je Team
+var stile: Array[SpielStil] = []      # KI-Spielstil je Team
 
 var ball: MatchBall
 var pitch: Pitch
@@ -83,6 +86,13 @@ func _ready() -> void:
 		var heim_v: Dictionary = vereine[0] if vereine.size() > 0 else {}
 		var gast_v: Dictionary = vereine[1 + rng.randi() % maxi(1, vereine.size() - 1)] if vereine.size() > 1 else {}
 		teams = [gen.erzeuge_team(heim_v, 11.0), gen.erzeuge_team(gast_v, 10.5)]
+		# Der Gegner bekommt einen zufälligen Spielstil
+		var ids := SpielStil.ids()
+		teams[1].spielstil = str(ids[rng.randi() % ids.size()])
+	for t in 2:
+		if t < stil_vorgabe.size() and stil_vorgabe[t] != "":
+			teams[t].spielstil = stil_vorgabe[t]
+		stile.append(SpielStil.hole(teams[t].spielstil))
 	ergebnis = MatchResult.new()
 	ergebnis.heim = teams[0]
 	ergebnis.gast = teams[1]
@@ -197,9 +207,38 @@ func formations_pos(f: Footballer, im_besitz: bool) -> Vector2:
 	var bp := _fortschritt(t, ball.position)
 	var by := (ball.position.y - Pitch.FELD.position.y) / Pitch.FELD.size.y
 	var x := basis.x + (bp - 0.5) * 0.38 + (0.12 if im_besitz else -0.05)
-	x += (taktik[t] - 1) * 0.07
-	var y := lerpf(basis.y, by, 0.22)
+	x += (taktik[t] - 1) * 0.07 + stile[t].hoehe
+	var y := lerpf(0.5 + (basis.y - 0.5) * stile[t].breite, by, 0.22)
 	return _welt(t, Vector2(clampf(x, 0.05, 0.93), clampf(y, 0.06, 0.94)))
+
+
+## In welchem Drittel (aus Sicht von Team t) liegt pos?
+func drittel(t: int, pos: Vector2) -> int:
+	return SpielStil.drittel_aus_fortschritt(_fortschritt(t, pos))
+
+
+## Feldspieler, der am weitesten vorne steht.
+func _vorderster_mitspieler(f: Footballer) -> Footballer:
+	var best: Footballer = null
+	var best_x := -INF
+	for m in aktive(f.team_idx, false):
+		if m == f:
+			continue
+		var x := _fortschritt(f.team_idx, m.position)
+		if x > best_x:
+			best_x = x
+			best = m
+	return best
+
+
+## Langer, hoher Ball in den Lauf des vordersten Spielers (Kick and Rush).
+func _langer_ball(f: Footballer) -> bool:
+	var vorne := _vorderster_mitspieler(f)
+	if vorne == null or _fortschritt(f.team_idx, vorne.position) <= _fortschritt(f.team_idx, f.position):
+		return false
+	_passen(f, vorne, true, true)
+	_zaehle("t%d_langer_ball" % f.team_idx)
+	return true
 
 
 func _naechster(t: int, pos: Vector2, ohne_torwart := true, ohne: Footballer = null) -> Footballer:
@@ -463,6 +502,14 @@ func _kick(von: Footballer, v: Vector2, vz := 0.0, schuss := false) -> void:
 
 
 func _passen(von: Footballer, an: Footballer, steil: bool, lupfer: bool) -> void:
+	var tt := von.team_idx
+	_zaehle("t%d_pass" % tt)
+	if Pitch.ist_fluegel(an.position):
+		_zaehle("t%d_pass_fluegel" % tt)
+	if drittel(tt, von.position) == SpielStil.Drittel.ABWEHR and not von.ist_torwart:
+		_zaehle("t%d_pass_abwehr" % tt)
+		if lupfer:
+			_zaehle("t%d_pass_abwehr_hoch" % tt)
 	var ziel := an.position
 	if steil:
 		ziel += Vector2(richtung[von.team_idx], 0) * 75.0 + an.vel * 0.3
@@ -483,6 +530,7 @@ func _passen(von: Footballer, an: Footballer, steil: bool, lupfer: bool) -> void
 ## Hohe Hereingabe in den Strafraum (Ecke, Flanke). Mit Richtung: zum Mitspieler in dieser Richtung.
 func _flanke(von: Footballer, dir := Vector2.ZERO) -> void:
 	var t := von.team_idx
+	_zaehle("t%d_flanke" % t)
 	var seite := richtung[t]
 	var ziel_pos := Pitch.elfmeterpunkt(seite)
 	var abnehmer: Footballer = null
@@ -1017,6 +1065,9 @@ func _ki_standard(a: Footballer) -> void:
 
 
 func _ki_standard_pass(a: Footballer) -> void:
+	if stile[a.team_idx].langer_ball_aus_abwehr and drittel(a.team_idx, a.position) == SpielStil.Drittel.ABWEHR:
+		if _langer_ball(a):
+			return
 	var ziel := _bester_passempfaenger(a, true)
 	if ziel == null:
 		ziel = _naechster(a.team_idx, a.position, true, a)
@@ -1261,7 +1312,7 @@ func _ki_pressen(f: Footballer, delta: float) -> void:
 	if f.tackling_cooldown > 0.0 or not f.kann_handeln():
 		return
 	var heisssporn := 1.0 if f.daten.hat_trait("Heißsporn") else 0.0
-	if d < 24.0 and rng.randf() < delta * 4.0:
+	if d < 24.0 and rng.randf() < delta * 4.0 * stile[f.team_idx].pressing:
 		_stehendes_tackling(f)
 	elif d > 26.0 and d < 42.0 and rng.randf() < delta * (0.1 + 0.3 * heisssporn):
 		f.starte_graetsche(gegner.position + gegner.vel * 0.15 - f.position)
@@ -1269,10 +1320,25 @@ func _ki_pressen(f: Footballer, delta: float) -> void:
 
 func _ki_ballfuehrer(f: Footballer, delta: float) -> void:
 	var t := f.team_idx
+	var stil := stile[t]
 	var tor := Pitch.tor_mitte(richtung[t])
 	var dist_tor := f.position.distance_to(tor)
 	var druck := _naechster_gegner_abstand(f)
-	if dist_tor < 270.0:
+	var dr := drittel(t, f.position)
+	var auf_fluegel := Pitch.ist_fluegel(f.position)
+	_zaehle("t%d_dribbel" % t)
+	if auf_fluegel:
+		_zaehle("t%d_dribbel_fluegel" % t)
+	# Kick and Rush: aus der Abwehr sofort hoch und lang nach vorne
+	if stil.langer_ball_aus_abwehr and dr == SpielStil.Drittel.ABWEHR and rng.randf() < delta * 6.0:
+		if _langer_ball(f):
+			return
+	# Flanke von der Außenbahn im Angriffsdrittel
+	if dr == SpielStil.Drittel.ANGRIFF and auf_fluegel and dist_tor > 110.0 \
+			and rng.randf() < delta * stil.flanken_rate:
+		_flanke(f)
+		return
+	if dist_tor < 270.0 * stil.schuss_distanz:
 		var chance := delta * (0.45 if dist_tor < 180.0 else 0.08)
 		if dist_tor < 95.0:
 			chance = delta * 4.0
@@ -1282,13 +1348,26 @@ func _ki_ballfuehrer(f: Footballer, delta: float) -> void:
 			var y := rng.randf_range(-0.95, 0.95)
 			_schiessen(f, Vector2(richtung[t], y).normalized(), rng.randf_range(0.55, 1.0))
 			return
-	if (druck < 48.0 and rng.randf() < delta * 3.5) or rng.randf() < delta * 0.5:
+	var ruhig_pass := delta * 0.5 * stil.pass_rate * (1.5 - stil.dribbel_neigung)
+	if (druck < 48.0 and rng.randf() < delta * 3.5 * stil.pass_rate) or rng.randf() < ruhig_pass:
 		var ziel := _bester_passempfaenger(f, druck < 48.0)
 		if ziel:
 			var dist := f.position.distance_to(ziel.position)
-			_passen(f, ziel, rng.randf() < 0.3, dist > 220.0 and rng.randf() < 0.35)
+			var hoch := rng.randf() < stil.hoch_anteil(dr) or (dist > 220.0 and rng.randf() < 0.35)
+			_passen(f, ziel, rng.randf() < 0.3, hoch)
 			return
-	var r := (tor - f.position).normalized()
+	# Dribbelrichtung nach Spielstil: über die Flügel oder durchs Zentrum
+	var ziel_punkt := tor
+	var fluegel_anteil := stil.zonen_anteil(dr, true)
+	if dr != SpielStil.Drittel.ANGRIFF:
+		if fluegel_anteil > 0.6:
+			ziel_punkt = Vector2(f.position.x + richtung[t] * 140.0, Pitch.fluegel_y(f.position))
+		elif fluegel_anteil < 0.4:
+			ziel_punkt = Vector2(f.position.x + richtung[t] * 140.0, Pitch.mitte().y)
+	elif fluegel_anteil > 0.6 and auf_fluegel:
+		# Auf dem Flügel bis zur Grundlinie durchziehen
+		ziel_punkt = Vector2(tor.x - richtung[t] * 40.0, Pitch.fluegel_y(f.position))
+	var r := (ziel_punkt - f.position).normalized()
 	var g := _naechster(1 - t, f.position, false)
 	if g and f.position.distance_to(g.position) < 70.0:
 		var weg := (f.position - g.position).normalized()
@@ -1314,6 +1393,10 @@ func _schussbahn_zu(f: Footballer, tor: Vector2) -> bool:
 
 func _bester_passempfaenger(f: Footballer, unter_druck: bool) -> Footballer:
 	var t := f.team_idx
+	var stil := stile[t]
+	var dr_von := drittel(t, f.position)
+	# Hohe Bälle gehen über Gegner hinweg, dann reicht eine schmalere Lücke
+	var min_frei := 8.0 if stil.hoch_anteil(dr_von) > 0.5 else 20.0
 	var best: Footballer = null
 	var best_wert := 0.15 if not unter_druck else -1.0
 	for m in aktive(t, false):
@@ -1326,10 +1409,14 @@ func _bester_passempfaenger(f: Footballer, unter_druck: bool) -> Footballer:
 		var frei := INF
 		for g in aktive(1 - t):
 			frei = minf(frei, _abstand_zur_linie(g.position, f.position, m.position))
-		if frei < 20.0:
+		if frei < min_frei:
 			continue
 		var vorwaerts := v.x * richtung[t] / 100.0
 		var wert := vorwaerts + minf(frei, 80.0) / 40.0 - dist / 400.0
+		# Spielstil: bevorzugte Zone des Empfängers und Lust auf weite Bälle
+		var zone := stil.zonen_anteil(drittel(t, m.position), Pitch.ist_fluegel(m.position))
+		wert += (zone - 0.5) * 2.0
+		wert += stil.lang_anteil(dr_von) * dist / 250.0
 		if wert > best_wert:
 			best_wert = wert
 			best = m
@@ -1350,6 +1437,8 @@ func _ki_torwart(f: Footballer, delta: float) -> void:
 		f.wunsch_richtung = Vector2.ZERO
 		f.halte_zeit -= delta
 		if f.halte_zeit <= 0.0 and not standard_laeuft:
+			if stile[t].langer_ball_aus_abwehr and _langer_ball(f):
+				return
 			var ziel := _bester_passempfaenger(f, true)
 			if ziel == null:
 				ziel = _naechster(t, f.position, true, f)

@@ -20,6 +20,8 @@ func _laufen() -> void:
 	_test_logik()
 	print("== Simulation: %d Spiele KI gegen KI ==" % spiele)
 	await _simulation(spiele)
+	print("== Spielstile im Vergleich ==")
+	await _stil_tests()
 	print("== Standards und Torwart ==")
 	await _standard_tests()
 	print("== Mensch-Steuerung mit zufälligen Eingaben ==")
@@ -96,6 +98,7 @@ func _simulation(anzahl: int) -> void:
 		root.add_child(m)
 		if m.ball == null:
 			await process_frame
+		m.set_physics_process(false)
 		var schritte := 0
 		var elf := 0
 		var letzter_typ := -1
@@ -184,14 +187,18 @@ func _standard_erzwingen(m: MatchController, typ: MatchController.Standard, pos:
 		m.step(1.0 / 60.0)
 
 
+## Drückt eine Taste für einige Frames. Der erste Schritt läuft im selben Frame wie der
+## Tastendruck, sonst sieht is_action_just_pressed() ihn nicht.
 func _taste(m: MatchController, aktion: String, frames: int) -> void:
 	Input.action_press(aktion)
-	for i in frames:
+	m.step(1.0 / 60.0)
+	for i in maxi(0, frames - 1):
 		await process_frame
 		m.step(1.0 / 60.0)
-	Input.action_release(aktion)
 	await process_frame
+	Input.action_release(aktion)
 	m.step(1.0 / 60.0)
+	await process_frame
 
 
 func _standard_tests() -> void:
@@ -200,6 +207,7 @@ func _standard_tests() -> void:
 	root.add_child(m)
 	if m.ball == null:
 		await process_frame
+	m.set_physics_process(false)   # nur der Test rechnet weiter, damit es reproduzierbar bleibt
 
 	# Freistoß: Ausführender wird gesteuert, läuft nicht los, Gegner halten Abstand
 	_standard_erzwingen(m, MatchController.Standard.FREISTOSS, Pitch.mitte() + Vector2(-80, 40))
@@ -299,6 +307,7 @@ func _mensch_test() -> void:
 	root.add_child(m)
 	if m.ball == null:
 		await process_frame
+	m.set_physics_process(false)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 99
 	var knoepfe := ["om_pass", "om_schuss", "om_steil", "om_lupfer", "om_sprint", "om_taktik"]
@@ -308,6 +317,7 @@ func _mensch_test() -> void:
 	var halbzeit_gesehen := false
 	while m.zustand != MatchController.Zustand.ENDE and schritte < 60 * 60 * 4:
 		if schritte % 12 == 0:
+			await process_frame   # neuer Frame, damit neue Tastendrücke als "just pressed" zählen
 			for a in gedrueckt:
 				Input.action_release(a)
 			gedrueckt.clear()
@@ -320,12 +330,8 @@ func _mensch_test() -> void:
 				gedrueckt.append(k)
 		if m.zustand == MatchController.Zustand.HALBZEIT:
 			halbzeit_gesehen = true
-			Input.action_press("om_pass")
-			await process_frame
-			Input.action_release("om_pass")
-			Input.action_press("om_pause")
-			await process_frame
-			Input.action_release("om_pause")
+			await _taste(m, "om_pass", 1)
+			await _taste(m, "om_pause", 1)
 		m.step(1.0 / 60.0)
 		schritte += 1
 		if schritte % 6 == 0:
@@ -336,3 +342,48 @@ func _mensch_test() -> void:
 	pruefe(m.zustand == MatchController.Zustand.ENDE, "Spiel mit Mensch-Steuerung endet")
 	print("     Ergebnis %d:%d, Wechsel %d, Schüsse %d" % [m.ergebnis.tore[0], m.ergebnis.tore[1], m.wechsel[0], m.ergebnis.schuesse[0]])
 	m.queue_free()
+
+
+## Lässt jeden Stil mehrfach gegen "ausgeglichen" spielen und misst das Verhalten von Team 1.
+func _stil_tests() -> void:
+	var werte := {}
+	for stil_id in ["ausgeglichen", "fluegelspiel", "kick_and_rush"]:
+		var z := {}
+		for i in 4:
+			var m := MatchController.new()
+			m.autoplay = true
+			m.seed_wert = 500 + i
+			m.stil_vorgabe = ["ausgeglichen", stil_id]
+			root.add_child(m)
+			if m.ball == null:
+				await process_frame
+			m.set_physics_process(false)
+			var n := 0
+			while m.zustand != MatchController.Zustand.ENDE and n < 60 * 60 * 8:
+				m.step(1.0 / 60.0)
+				n += 1
+			for k in ["pass", "pass_fluegel", "pass_abwehr", "pass_abwehr_hoch", "dribbel", "dribbel_fluegel", "flanke", "langer_ball"]:
+				z[k] = int(z.get(k, 0)) + int(m.statistik.get("t1_" + k, 0))
+			z["tore"] = int(z.get("tore", 0)) + m.ergebnis.tore[1]
+			z["gegentore"] = int(z.get("gegentore", 0)) + m.ergebnis.tore[0]
+			m.queue_free()
+		var w := {
+			"fluegel_pass": float(z["pass_fluegel"]) / maxf(1.0, z["pass"]),
+			"fluegel_dribbel": float(z["dribbel_fluegel"]) / maxf(1.0, z["dribbel"]),
+			"abwehr_hoch": float(z["pass_abwehr_hoch"]) / maxf(1.0, z["pass_abwehr"]),
+			"flanken": z["flanke"] / 4.0,
+			"lange_baelle": z["langer_ball"] / 4.0,
+			"paesse": z["pass"] / 4.0,
+		}
+		werte[stil_id] = w
+		print("     %-14s Pässe/Spiel %4.1f · auf Flügel %3d%% · Dribbeln auf Flügel %3d%% · hoch aus Abwehr %3d%% · Flanken %.1f · lange Bälle %.1f · Tore %d:%d" % [
+			stil_id, w["paesse"], int(w["fluegel_pass"] * 100), int(w["fluegel_dribbel"] * 100),
+			int(w["abwehr_hoch"] * 100), w["flanken"], w["lange_baelle"], z["tore"], z["gegentore"]])
+	var a: Dictionary = werte["ausgeglichen"]
+	var f: Dictionary = werte["fluegelspiel"]
+	var k: Dictionary = werte["kick_and_rush"]
+	pruefe(f["fluegel_pass"] > a["fluegel_pass"] + 0.1, "Flügelspiel passt deutlich öfter auf die Flügel")
+	pruefe(f["fluegel_dribbel"] > a["fluegel_dribbel"] + 0.1, "Flügelspiel dribbelt deutlich öfter auf den Flügeln")
+	pruefe(f["flanken"] > a["flanken"], "Flügelspiel flankt öfter")
+	pruefe(k["abwehr_hoch"] > 0.7 and k["abwehr_hoch"] > a["abwehr_hoch"] + 0.3, "Kick and Rush spielt aus der Abwehr fast immer hoch")
+	pruefe(k["lange_baelle"] > a["lange_baelle"] + 3.0, "Kick and Rush schlägt viele lange Bälle")

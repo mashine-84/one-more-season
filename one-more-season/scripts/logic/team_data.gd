@@ -8,6 +8,7 @@ var farbe: Color = Color.WHITE
 var farbe_hell: Color = Color.WHITE
 var kader: Array[PlayerData] = []
 var formation: String = "2-2-1"
+var spielstil: String = SpielStil.STANDARD_ID   ## wie die KI dieses Teams spielt
 
 
 func verfuegbare() -> Array[PlayerData]:

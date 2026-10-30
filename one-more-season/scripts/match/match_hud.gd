@@ -18,6 +18,10 @@ func _draw() -> void:
 	_text(font, heim.name, Vector2(352, 38), 20, Color.WHITE)
 	var gast_breite := font.get_string_size(gast.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x
 	_text(font, gast.name, Vector2(800 - gast_breite, 38), 20, Color.WHITE)
+	if m.stile.size() == 2:
+		_text(font, m.stile[0].name, Vector2(352, 54), 11, Color(1, 1, 1, 0.55))
+		var stil_breite := font.get_string_size(m.stile[1].name, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+		_text(font, m.stile[1].name, Vector2(800 - stil_breite, 54), 11, Color(1, 1, 1, 0.55))
 	var stand := "%d : %d" % [m.ergebnis.tore[0], m.ergebnis.tore[1]]
 	_zentriert(font, stand, Vector2(576, 40), 30, Color("#f7dc6f"))
 	_zentriert(font, "%d'  ·  %d. Halbzeit" % [m.minute(), m.halbzeit], Vector2(576, 56), 12, Color(1, 1, 1, 0.7))
